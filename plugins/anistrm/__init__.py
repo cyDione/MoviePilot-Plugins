@@ -59,9 +59,9 @@ class ANiStrm(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/honue/MoviePilot-Plugins/main/icons/anistrm.png"
     # 插件版本
-    plugin_version = "2.4.2"
+    plugin_version = "2.4.3"
     # 插件作者
-    plugin_author = "honue"
+    plugin_author = "cydione"
     # 作者主页
     author_url = "https://github.com/honue"
     # 插件配置项ID前缀
