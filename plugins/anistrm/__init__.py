@@ -1,6 +1,8 @@
 import os
 import time
 from datetime import datetime, timedelta
+from urllib.parse import quote, unquote
+import re
 
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -13,6 +15,14 @@ from typing import Any, List, Dict, Tuple, Optional
 from app.log import logger
 import xml.dom.minidom
 from app.utils.dom import DomUtils
+
+# 尝试导入Playwright，如果失败则使用备用方案
+try:
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+    logger.info("Playwright未安装，将使用备用方案")
 
 
 def retry(ExceptionToCheck: Any,
@@ -54,13 +64,13 @@ class ANiStrm(_PluginBase):
     # 插件名称
     plugin_name = "ANiStrm"
     # 插件描述
-    plugin_desc = "自动获取当季所有番剧，免去下载，轻松拥有一个番剧媒体库"
+    plugin_desc = "自动获取当季TOP15番剧的全集，免去下载，轻松拥有一个番剧媒体库"
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/honue/MoviePilot-Plugins/main/icons/anistrm.png"
     # 插件版本
-    plugin_version = "2.4.2"
+    plugin_version = "2.5.0"
     # 插件作者
-    plugin_author = "honue"
+    plugin_author = "cydione"
     # 作者主页
     author_url = "https://github.com/honue"
     # 插件配置项ID前缀
@@ -131,13 +141,184 @@ class ANiStrm(_PluginBase):
 
     @retry(Exception, tries=3, logger=logger, ret=[])
     def get_current_season_list(self) -> List:
-        url = f'https://openani.an-i.workers.dev/{self.__get_ani_season()}/'
+        """获取当前季度TOP15番剧的所有集数"""
+        if not PLAYWRIGHT_AVAILABLE:
+            logger.warn("Playwright不可用，跳过季度API")
+            return []
+            
+        season = self.__get_ani_season()
+        url = f'https://openani.an-i.workers.dev/{season}/'
+        
+        try:
+            logger.info(f"正在使用Playwright获取季度页面: {url}")
+            
+            with sync_playwright() as p:
+                # 启动浏览器
+                browser = p.chromium.launch(headless=True)
+                page = browser.new_page()
+                
+                try:
+                    # 访问页面
+                    page.goto(url, wait_until='networkidle')
+                    
+                    # 等待页面完全加载
+                    page.wait_for_timeout(5000)  # 等待5秒
+                    
+                    # 尝试等待视频元素出现
+                    try:
+                        page.wait_for_selector('video, .file, [data-filename]', timeout=10000)
+                    except:
+                        logger.warn("未找到预期的视频元素，继续尝试解析...")
+                    
+                    # 获取页面内容
+                    content = page.content()
+                    
+                    # 查找视频文件
+                    video_files = []
+                    
+                    # 方法1: 查找video标签
+                    video_elements = page.query_selector_all('video')
+                    for video in video_elements:
+                        src = video.get_attribute('src')
+                        if src and src.endswith('.mp4'):
+                            video_files.append(src.split('/')[-1])
+                    
+                    # 方法2: 查找包含.mp4的链接
+                    links = page.query_selector_all('a[href*=".mp4"]')
+                    for link in links:
+                        href = link.get_attribute('href')
+                        if href and '.mp4' in href:
+                            filename = href.split('/')[-1]
+                            if filename not in video_files:
+                                video_files.append(filename)
+                    
+                    # 方法3: 查找data属性中的文件名
+                    elements_with_data = page.query_selector_all('[data-filename]')
+                    for element in elements_with_data:
+                        filename = element.get_attribute('data-filename')
+                        if filename and '.mp4' in filename and filename not in video_files:
+                            video_files.append(filename)
+                    
+                    # 方法4: 在页面源码中查找文件名
+                    patterns = [
+                        r'"([^"]*\.mp4[^"]*)"',
+                        r"'([^']*\.mp4[^']*)'",
+                        r'filename["\']?\s*:\s*["\']([^"\']*\.mp4[^"\']*)["\']',
+                        r'name["\']?\s*:\s*["\']([^"\']*\.mp4[^"\']*)["\']',
+                        r'src["\']?\s*:\s*["\']([^"\']*\.mp4[^"\']*)["\']',
+                        r'href["\']?\s*:\s*["\']([^"\']*\.mp4[^"\']*)["\']',
+                    ]
+                    
+                    for pattern in patterns:
+                        matches = re.findall(pattern, content)
+                        for match in matches:
+                            if match and match not in video_files:
+                                video_files.append(match)
+                    
+                    # 方法5: 查找所有包含.mp4的文本内容
+                    all_text = page.text_content('body')
+                    mp4_matches = re.findall(r'([^/\s]+\.mp4[^\s]*)', all_text)
+                    for match in mp4_matches:
+                        if match not in video_files:
+                            video_files.append(match)
+                    
+                    logger.info(f"从Playwright渲染的页面中解析到 {len(video_files)} 个视频文件")
+                    
+                    # 清理文件名并获取TOP15
+                    cleaned_files = self._clean_and_get_top15(video_files)
+                    
+                    return cleaned_files
+                    
+                finally:
+                    browser.close()
+                
+        except Exception as e:
+            logger.error(f"Playwright获取季度番剧列表失败: {e}")
+            return []
 
-        rep = RequestUtils(ua=settings.USER_AGENT if settings.USER_AGENT else None,
-                           proxies=settings.PROXY if settings.PROXY else None).post(url=url)
-        logger.debug(rep.text)
-        files_json = rep.json()['files']
-        return [file['name'] for file in files_json]
+    def _clean_and_get_top15(self, video_files: List[str]) -> List[str]:
+        """清理文件名并获取TOP15番剧的所有集数"""
+        cleaned_files = []
+        anime_series = {}  # 用于统计每个番剧的集数
+        
+        for filename in video_files:
+            # 清理文件名
+            clean_name = self._clean_filename(filename)
+            if not clean_name:
+                continue
+                
+            # 提取番剧名称（去掉集数）
+            anime_name = self._extract_anime_name(clean_name)
+            if anime_name:
+                if anime_name not in anime_series:
+                    anime_series[anime_name] = []
+                anime_series[anime_name].append(clean_name)
+        
+        # 按集数排序，选择集数最多的TOP15番剧
+        sorted_anime = sorted(anime_series.items(), key=lambda x: len(x[1]), reverse=True)
+        top15_anime = sorted_anime[:15]
+        
+        logger.info(f"找到 {len(anime_series)} 个不同的番剧")
+        logger.info("TOP15番剧及其所有集数:")
+        for i, (anime_name, episodes) in enumerate(top15_anime, 1):
+            # 按集数排序
+            sorted_episodes = sorted(episodes, key=lambda x: self._extract_episode_number(x))
+            logger.info(f"  {i}. {anime_name} ({len(episodes)}集)")
+            # 添加该番剧的所有集数
+            cleaned_files.extend(sorted_episodes)
+        
+        return cleaned_files
+
+    def _clean_filename(self, filename: str) -> str:
+        """清理文件名，去掉URL编码和?a=view部分"""
+        if not filename:
+            return ""
+            
+        # 去掉?a=view部分
+        if '?a=view' in filename:
+            filename = filename.split('?a=view')[0]
+        
+        # URL解码
+        try:
+            filename = unquote(filename)
+        except:
+            pass
+        
+        # 去掉HTML标签
+        filename = re.sub(r'<[^>]+>', '', filename)
+        
+        # 去掉路径信息，只保留文件名
+        if '/' in filename:
+            filename = filename.split('/')[-1]
+        
+        # 去掉多余的空白字符
+        filename = filename.strip()
+        
+        # 确保以.mp4结尾
+        if not filename.endswith('.mp4'):
+            filename += '.mp4'
+            
+        return filename
+
+    def _extract_anime_name(self, filename: str) -> str:
+        """从文件名中提取番剧名称"""
+        # 去掉[ANi]前缀
+        name = re.sub(r'^\[ANi\]\s*', '', filename)
+        
+        # 去掉集数部分（如 - 01, - 02等）
+        name = re.sub(r'\s*-\s*\d+\s*\[.*$', '', name)
+        
+        # 去掉画质信息
+        name = re.sub(r'\s*\[.*$', '', name)
+        
+        return name.strip()
+
+    def _extract_episode_number(self, filename: str) -> int:
+        """从文件名中提取集数"""
+        match = re.search(r'- (\d+)', filename)
+        if match:
+            return int(match.group(1))
+        return 0
 
     @retry(Exception, tries=3, logger=logger, ret=[])
     def get_latest_list(self) -> List:
@@ -163,9 +344,10 @@ class ANiStrm(_PluginBase):
 
     def __touch_strm_file(self, file_name, file_url: str = None) -> bool:
         if not file_url:
-            # 季度API生成的URL，使用新格式
-            encoded_filename = quote(file_name, safe='')
-            src_url = f'https://openani.an-i.workers.dev/{self._date}/{encoded_filename}.mp4?d=true'
+            # 季度API生成的URL，修复重复路径问题
+            encoded_filename = quote(file_name, safe='.')
+            # 修复URL格式，去掉重复的路径
+            src_url = f'https://openani.an-i.workers.dev/{self._date}/{encoded_filename}?d=true'
         else:
             # 检查API获取的URL格式是否符合要求
             if self._is_url_format_valid(file_url):
@@ -175,14 +357,17 @@ class ANiStrm(_PluginBase):
                 # 格式不符合要求，进行转换
                 src_url = self._convert_url_format(file_url)
         
-        file_path = f'{self._storageplace}/{file_name}.strm'
+        # 清理文件名用于保存
+        clean_file_name = self._clean_filename(file_name)
+        file_path = f'{self._storageplace}/{clean_file_name}.strm'
+        
         if os.path.exists(file_path):
-            logger.debug(f'{file_name}.strm 文件已存在')
+            logger.debug(f'{clean_file_name}.strm 文件已存在')
             return False
         try:
             with open(file_path, 'w') as file:
                 file.write(src_url)
-                logger.debug(f'创建 {file_name}.strm 文件成功')
+                logger.debug(f'创建 {clean_file_name}.strm 文件成功')
                 return True
         except Exception as e:
             logger.error('创建strm源文件失败：' + str(e))
