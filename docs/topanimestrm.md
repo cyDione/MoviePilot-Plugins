@@ -1,4 +1,4 @@
-- [1. ANi-Strm插件](#MoviePilot-x-ANi-Strm)
+- [1. TopAnimeStrm插件](#MoviePilot-x-TopAnimeStrm)
     - [2023-10秋 刮削效果](#2023-10秋-刮削效果)
     - [注意事项](#注意事项)
     - [Todo](#Todo)
@@ -9,7 +9,7 @@
 </div>
 
 
-## MoviePilot x ANi-Strm
+## MoviePilot x TopAnimeStrm
 
 建议配合目录监控使用，strm文件创建在你插件填写的地址 如/downloads/strm
 

@@ -60,9 +60,9 @@ def retry(ExceptionToCheck: Any,
     return deco_retry
 
 
-class ANiStrm(_PluginBase):
+class TopAnimeStrm(_PluginBase):
     # 插件名称
-    plugin_name = "ANiStrm"
+    plugin_name = "TopAnimeStrm"
     # 插件描述
     plugin_desc = "自动获取当季TOP15番剧的全集，免去下载，轻松拥有一个番剧媒体库"
     # 插件图标
@@ -74,7 +74,7 @@ class ANiStrm(_PluginBase):
     # 作者主页
     author_url = "https://github.com/cyDione"
     # 插件配置项ID前缀
-    plugin_config_prefix = "anistrm_"
+    plugin_config_prefix = "topanimestrm_"
     # 加载顺序
     plugin_order = 15
     # 可使用的用户级别
@@ -110,16 +110,16 @@ class ANiStrm(_PluginBase):
                 try:
                     self._scheduler.add_job(func=self.__task,
                                             trigger=CronTrigger.from_crontab(self._cron),
-                                            name="ANiStrm文件创建")
-                    logger.info(f'ANi-Strm定时任务创建成功：{self._cron}')
+                                            name="TopAnimeStrm文件创建")
+                    logger.info(f'TopAnimeStrm定时任务创建成功：{self._cron}')
                 except Exception as err:
                     logger.error(f"定时任务配置错误：{str(err)}")
 
             if self._onlyonce:
-                logger.info(f"ANi-Strm服务启动，立即运行一次")
+                logger.info(f"TopAnimeStrm服务启动，立即运行一次")
                 self._scheduler.add_job(func=self.__task, args=[self._fulladd], trigger='date',
                                         run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
-                                        name="ANiStrm文件创建")
+                                        name="TopAnimeStrm文件创建")
                 # 关闭一次性开关 全量转移
                 self._onlyonce = False
                 self._fulladd = False
@@ -588,6 +588,6 @@ class ANiStrm(_PluginBase):
 
 
 if __name__ == "__main__":
-    anistrm = ANiStrm()
-    name_list = anistrm.get_latest_list()
+    top_anime_strm = TopAnimeStrm()
+    name_list = top_anime_strm.get_latest_list()
     print(name_list)

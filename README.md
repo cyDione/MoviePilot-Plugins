@@ -4,7 +4,7 @@
 https://github.com/honue/MoviePilot-Plugins/
 ```
 
-- [ANi-Strm插件](./docs/anistrm.md)
+- [TopAnimeStrm插件](./docs/topanimestrm.md)
 
 > 从[Ani Open](https://aniopen.an-i.workers.dev/)自动抓取，生成strm文件，由mp刮削入库
 
